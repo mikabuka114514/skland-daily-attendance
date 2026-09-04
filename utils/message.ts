@@ -95,7 +95,14 @@ export function createMessageCollector(options: CreateMessageCollectorOptions): 
 
     if (urls.length > 0) {
       const notifier = createNotifier(urls)
-      await notifier.send({ title, body: content })
+      try {
+        await notifier.send({ title, body: content })
+      }
+      catch (sendError) {
+        // Don't let notification failures crash the attendance task
+        console.error('[notify] send failed:', sendError)
+        hasError = true
+      }
     }
 
     // Exit with error if any error occurred

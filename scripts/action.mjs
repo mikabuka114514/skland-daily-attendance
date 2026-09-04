@@ -4,9 +4,18 @@ import process from 'node:process'
 import * as core from '@actions/core'
 import waitOn from 'wait-on'
 
+// github action secrets 未设置时，空串会覆盖 nitro runtimeConfig 默认值
+// 直接删除未设置的 secret 环境变量以规避该问题
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('SKLAND_') && !process.env[key]) {
+    delete process.env[key]
+  }
+}
+
 const PORT = process.env.NITRO_PORT || 3000
 const HOST = process.env.NITRO_HOST || 'localhost'
 const BASE_URL = `http://${HOST}:${PORT}`
+const TASK_URL = `${BASE_URL}/_nitro/tasks/attendance`
 
 core.info('🚀 准备启动 Nitro 服务...')
 
@@ -48,7 +57,7 @@ server.on('error', (error) => {
 })
 
 try {
-  // 等待服务就绪
+  // 等待 HTTP 服务就绪
   await core.group('等待服务启动', async () => {
     core.info(`服务地址: ${BASE_URL}`)
     core.info('超时时间: 60 秒')
@@ -57,15 +66,21 @@ try {
       timeout: 60000, // 60 秒超时
       interval: 1000, // 每秒检查一次
     })
-    core.info('✅ 服务已启动')
+    core.info('✅ HTTP 服务已启动')
   })
 
-  // 触发 attendance 任务
+  // 触发 attendance 任务（404 重试：tasks 路由可能尚未注册完毕）
   await core.group('执行 attendance 任务', async () => {
-    const taskUrl = `${BASE_URL}/_nitro/tasks/attendance`
-    core.info(`任务 URL: ${taskUrl}`)
+    core.info(`任务 URL: ${TASK_URL}`)
 
-    const response = await fetch(taskUrl)
+    const maxRetries = 10
+    let response
+    for (let i = 0; i < maxRetries; i++) {
+      response = await fetch(TASK_URL)
+      if (response.status !== 404) break
+      core.info(`Tasks API 尚未就绪 (404)，重试 ${i + 1}/${maxRetries}...`)
+      await new Promise(r => setTimeout(r, 2000))
+    }
 
     if (!response.ok) {
       throw new Error(`请求失败: ${response.status} ${response.statusText}`)
